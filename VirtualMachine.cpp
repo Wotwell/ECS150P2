@@ -2,12 +2,14 @@
 #include "Machine.h"
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
 
 extern "C" {
   int _tickms;
   int _machinetickms;
   TVMStatus VMStart(int tickms, int machinetickms, int argc, char *argv[]) {
     TVMMainEntry VMLoadModule(const char *module);
+    printf("Hello\n");
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
