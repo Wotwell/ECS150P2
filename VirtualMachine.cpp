@@ -11,6 +11,7 @@ extern "C" {
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
+    MachineInitialize(_machinetickms);
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
       return VM_STATUS_FAILURE;
