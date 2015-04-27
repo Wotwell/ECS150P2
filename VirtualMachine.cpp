@@ -7,20 +7,22 @@
 extern "C" {
   int _tickms;
   int _machinetickms;
-  
+  volatile unsigned long _total_ticks;
+
   TVMStatus VMStart(int tickms, int machinetickms, int argc, char *argv[]) {
     TVMMainEntry VMLoadModule(const char *module);
     void VMAlarmCallback(void* data);
     
-    printf("Hello\n");
+    //printf("Hello\n");
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
     int alarmtick = 100*_tickms;
-    
+    _total_ticks = 0;
     
     //initialize machine
     MachineInitialize(_machinetickms);
+    MachineEnableSignals();
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
 
     //load and call module
@@ -44,12 +46,23 @@ extern "C" {
   }
   
   TVMStatus VMThreadSleep(TVMTick tick) {
-    //VMPrint("%d\n",_tickms);
-    
+    printf("Starting sleep, ticks at %ld\n",_total_ticks);
+    unsigned long end_time = _total_ticks + tick;
+    unsigned long last_tick = _total_ticks;
+    while(_total_ticks < end_time) {
+      //sleep(100);
+      // if(last_tick != _total_ticks) {
+      // 	printf("It ticked, you prick\n");
+      // 	last_tick = _total_ticks;
+      // }
+
+    }
+    printf("Ending sleep, ticks at %ld\n",_total_ticks);
     return VM_STATUS_SUCCESS;
   }
 
   void VMAlarmCallback(void* data){
-
+    //printf("Hello, ticks are at %ld\n", _total_ticks);
+    _total_ticks++;
   }
 }
