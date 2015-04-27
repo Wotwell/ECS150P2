@@ -7,12 +7,23 @@
 extern "C" {
   int _tickms;
   int _machinetickms;
+  
   TVMStatus VMStart(int tickms, int machinetickms, int argc, char *argv[]) {
     TVMMainEntry VMLoadModule(const char *module);
+    void VMAlarmCallback(void* data);
+    
     printf("Hello\n");
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
+    int alarmtick = 100*_tickms;
+    
+    
+    //initialize machine
+    MachineInitialize(_machinetickms);
+    MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
+
+    //load and call module
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
       return VM_STATUS_FAILURE;
@@ -36,5 +47,9 @@ extern "C" {
     //VMPrint("%d\n",_tickms);
     
     return VM_STATUS_SUCCESS;
+  }
+
+  void VMAlarmCallback(void* data){
+
   }
 }
