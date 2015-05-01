@@ -209,7 +209,7 @@ extern "C" {
           _largestprime = _largesttest;
           printf("%llu\n",_largestprime);
           }
-          ++_largesttest;
+          _largesttest=_largesttest+2;
           prime = true;
       }
   }
