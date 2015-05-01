@@ -34,16 +34,16 @@ extern "C" {
         SMachineContextRef mcntxref; 
     public:
         Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadID tid){
-                tThreadEntry = entry;
-                tEntryParam = param;
-                tStackSize = memsize;
-                tThreadPriority = prio;
-                tThreadID = tid;
-                tStack = malloc(tStackSize);
-		mcntxref = new SMachineContext;
-                tThreadState = VM_THREAD_STATE_DEAD;
-                tTick = 0;
-                MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
+            tThreadEntry = entry;
+            tEntryParam = param;
+            tStackSize = memsize;
+            tThreadPriority = prio;
+            tThreadID = tid;
+            tStack = malloc(tStackSize);
+            mcntxref = new SMachineContext;
+            tThreadState = VM_THREAD_STATE_DEAD;
+            tTick = 0;
+            MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
             
         }
         TVMThreadID getID(){
@@ -124,8 +124,7 @@ extern "C" {
   
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     MachineSuspendSignals(_signalstate);
-    Thread(entry,param,memsize,prio,_ntid);
-    // _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
+    _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
     // *tid = _threads.back().getID();
     ++_ntid;
     MachineResumeSignals(_signalstate);
