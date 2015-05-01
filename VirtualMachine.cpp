@@ -7,13 +7,14 @@
 
 extern "C" {
   class Thread;
+  void timetokill(void* param);
   
   int _tickms;
   int _machinetickms;
   volatile unsigned long _total_ticks;
   volatile TMachineSignalStateRef _signalstate;
   std::vector<Thread> _threads;
-  int _ntid;
+  TVMThreadID _ntid;
   long long unsigned int _largestprime;
   long long unsigned int _largesttest;
 
@@ -32,19 +33,21 @@ extern "C" {
         void* tStack;
         SMachineContextRef mcntxref; 
     public:
-        Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
+        Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadID tid){
                 tThreadEntry = entry;
                 tEntryParam = param;
                 tStackSize = memsize;
                 tThreadPriority = prio;
-                tThreadID = *tid;
-                tStackSize = 1048576; //1MB
+                tThreadID = tid;
                 tStack = malloc(tStackSize);
                 tThreadState = VM_THREAD_STATE_DEAD;
                 tTick = 0;
                 
                 MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
             
+        }
+        TVMThreadID getID(){
+            return tThreadID;
         }
         
   };
@@ -70,12 +73,16 @@ extern "C" {
     MachineInitialize(_machinetickms);
     MachineEnableSignals();
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
-
+    
+    //create dummy thread
+    VMThreadCreate(timetokill, NULL, 1024, 000, &_ntid);
+    
     //load and call module
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
       return VM_STATUS_FAILURE;
-    module_main(argc,argv);
+    //module_main(argc,argv);
+    //VMThreadCreate(module_main, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid);
     return VM_STATUS_SUCCESS;
   }
 
@@ -117,14 +124,16 @@ extern "C" {
   
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     MachineSuspendSignals(_signalstate);
+    _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
+    *tid = _threads.back().getID();
     ++_ntid;
-    _threads.push_back(Thread(entry,param,memsize,prio,tid));
     MachineResumeSignals(_signalstate);
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
   }
   
   void timetokill(void* param){
       while(1){
+          /*
           for(long long unsigned int i = 2; i < _largesttest/2; ++i){
              if( _largesttest%i != 0 ){
                  ++_largesttest;
@@ -133,6 +142,7 @@ extern "C" {
           }
           _largestprime = _largesttest;
           ++_largesttest;
+          * */
       }
       
   }
