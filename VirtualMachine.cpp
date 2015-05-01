@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <vector>
+#include <queue>
 
 extern "C" {
   class Thread;
@@ -17,6 +18,7 @@ extern "C" {
   TVMThreadID _ntid;
   long long unsigned int _largestprime;
   long long unsigned int _largesttest;
+  std::queue<Thread> highQ, medQ, lowQ, jamezQ;
 
 
   class Thread{
@@ -131,9 +133,14 @@ extern "C" {
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
   }
   
+  TVMStatus VMThreadActivate(TVMThreadID thread){
+      
+      return VM_STATUS_SUCCESS;
+  }
+  
   void timetokill(void* param){
       while(1){
-          /*
+          
           for(long long unsigned int i = 2; i < _largesttest/2; ++i){
              if( _largesttest%i != 0 ){
                  ++_largesttest;
@@ -142,7 +149,7 @@ extern "C" {
           }
           _largestprime = _largesttest;
           ++_largesttest;
-          * */
+          
       }
   }
   
