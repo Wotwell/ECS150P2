@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <vector>
 #include <queue>
-
+#include <climits>
 extern "C" {
   class Thread;
   void timetokill(void* param);
@@ -18,57 +18,105 @@ extern "C" {
   TVMThreadID _ntid;
   long long unsigned int _largestprime;
   long long unsigned int _largesttest;
-  std::queue<Thread> highQ, medQ, lowQ, jamezQ;
-
-
+  std::queue<Thread*> highQ, medQ, lowQ, jamezQ;
+//pronounced qwa
+  TVMThreadID _current_thread;
+  TVMStatus VMThreadID(TVMThreadIDRef threadref);
+  Thread *getThreadByID(TVMThreadID id);
+  void VMScheduleThreads();
   class Thread{
-      private:
-        TVMMemorySize tStackSize;
-        TVMStatus tStatus;
-        TVMTick tTick;
-        TVMThreadID tThreadID;
-        TVMMutexID tMutexID;
-        TVMThreadPriority tThreadPriority;  
-        TVMThreadState tThreadState;  
-        TVMThreadEntry tThreadEntry;
-        void* tEntryParam;
-        void* tStack;
-        SMachineContextRef mcntxref; 
-    public:
-        Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadID tid){
-            tThreadEntry = entry;
-            tEntryParam = param;
-            tStackSize = memsize;
-            tThreadPriority = prio;
-            tThreadID = tid;
-            tStack = malloc(tStackSize);
-            mcntxref = new SMachineContext;
-            tThreadState = VM_THREAD_STATE_DEAD;
-            tTick = 0;
-            MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
+  private:
+    TVMMemorySize tStackSize;
+    TVMStatus tStatus;
+    TVMTick tTick;
+    TVMThreadID tThreadID;
+    TVMMutexID tMutexID;
+    TVMThreadPriority tThreadPriority;  
+    TVMThreadState tThreadState;  
+    TVMThreadEntry tThreadEntry;
+    void* tEntryParam;
+    void* tStack;
+    SMachineContextRef mcntxref; 
+  public:
+    Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadID tid){
+      tThreadEntry = entry;
+      tEntryParam = param;
+      tStackSize = memsize;
+      tThreadPriority = prio;
+      tThreadID = tid;
+      tStack = malloc(tStackSize);
+      mcntxref = new SMachineContext;
+      tThreadState = VM_THREAD_STATE_DEAD;
+      tTick = 0;
+      MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
             
-        }
-        TVMThreadID getID(){
-            return tThreadID;
-        }
+    }
+    TVMThreadID getID(){
+      return tThreadID;
+    }
+    TVMThreadPriority getPriority(){
+      return tThreadPriority;
+    }
+    TVMThreadState getState(){
+      return tThreadState;
+    }
+    void setState(TVMThreadState state){
+      tThreadState = state;
+    }
+    void run() {
+      //MachineSuspendSignals(_signalstate); // MachineContextRestore never returns, so we can't wrap
+      // I think...
+      setState(VM_THREAD_STATE_RUNNING);
+      TVMThreadID ref;
+      VMThreadID(&ref);
+      if(ref == UINT_MAX) { // This is our first thread
+	_current_thread = this->tThreadID;
+	MachineContextRestore(mcntxref);
+	printf("HELLO\n");
+      } else {
+	Thread *x = getThreadByID(ref);
+	// do a get priority right here, if the current running threads priority is higher than ours don't switch.
+	x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
+	VMThreadActivate(ref);
+	MachineContextSwitch(x->getRef(),this->mcntxref);
+      }
+      //MachineResumeSignals(_signalstate);
+    }
+    SMachineContextRef getRef() {
+      return mcntxref;
+    }    
     ~Thread() {
       delete mcntxref;
       free(tStack);
     }
   };
-
+  Thread *getThreadByID(TVMThreadID id) {
+    for(unsigned int i = 0; i < _threads.size(); ++i) {
+      if(_threads[i].getID() == id) {
+	return &(_threads[i]);
+      }
+    }
+    return NULL;
+  }
+  TVMStatus VMThreadID(TVMThreadIDRef threadref) {
+    *threadref = _current_thread;
+    if(threadref == NULL) {
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    return VM_STATUS_SUCCESS;
+  }
 
 
   TVMStatus VMStart(int tickms, int machinetickms, int argc, char *argv[]) {
     TVMMainEntry VMLoadModule(const char *module);
     void VMAlarmCallback(void* data);
     
-    //printf("Hello\n");
+    _current_thread = UINT_MAX;
     _ntid = 0;
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
-    int alarmtick = 100*_tickms;
+    int alarmtick = 100*_tickms; // milliseconds to microseconds conversion
     _total_ticks = 0;
     _largestprime = 2;
     _largesttest = 3;
@@ -79,8 +127,10 @@ extern "C" {
     MachineEnableSignals();
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
     
+
     //create dummy thread
     VMThreadCreate(timetokill, NULL, 1024, 000, &_ntid);
+    VMThreadActivate(0);
     
     //load and call module
     module_main = VMLoadModule(argv[0]);
@@ -88,6 +138,7 @@ extern "C" {
       return VM_STATUS_FAILURE;
     //module_main(argc,argv);
     //VMThreadCreate(module_main, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid);
+    VMScheduleThreads();
     return VM_STATUS_SUCCESS;
   }
 
@@ -122,11 +173,6 @@ extern "C" {
     
   }
 
-  void VMAlarmCallback(void* data){
-    //printf("Hello, ticks are at %ld\n", _total_ticks);
-    _total_ticks++;
-  }
-  
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     MachineSuspendSignals(_signalstate);
     _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
@@ -136,15 +182,9 @@ extern "C" {
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
   }
   
-  TVMStatus VMThreadActivate(TVMThreadID thread){
-      
-      return VM_STATUS_SUCCESS;
-  }
-  
   void timetokill(void* param){
       while(1){
-          
-          for(long long unsigned int i = 2; i < _largesttest/2; ++i){
+	for(long long unsigned int i = 2; i < _largesttest/2; ++i){
              if( _largesttest%i != 0 ){
                  ++_largesttest;
                 break;
@@ -152,10 +192,67 @@ extern "C" {
           }
           _largestprime = _largesttest;
           ++_largesttest;
-          
       }
   }
   
+  TVMStatus VMThreadActivate(TVMThreadID thread){
+    MachineSuspendSignals(_signalstate);
+    for(unsigned int i = 0; i < _threads.size(); ++i){
+        if(_threads[i].getID() == thread){
+            //thread must be dead
+            if(_threads[i].getState() != VM_THREAD_STATE_DEAD){
+                return VM_STATUS_ERROR_INVALID_STATE;
+            }
+            //set state
+            _threads[i].setState(VM_THREAD_STATE_READY);
+            //push in Q
+            TVMThreadPriority prio = _threads[i].getPriority();
+            if(prio == VM_THREAD_PRIORITY_HIGH ){
+                highQ.push(&_threads[i]);
+            }
+            else if(prio == VM_THREAD_PRIORITY_NORMAL ){
+                medQ.push(&_threads[i]);
+            }
+            else if(prio == VM_THREAD_PRIORITY_LOW){
+                lowQ.push(&_threads[i]);
+            }
+            else if( prio ==0){
+                jamezQ.push(&_threads[i]);
+            }
+            else{
+                return VM_STATUS_FAILURE;
+            }
+        }
+    }
+    MachineResumeSignals(_signalstate);
+    return VM_STATUS_SUCCESS;
+  }
+
+  void VMAlarmCallback(void* data){
+    _total_ticks++;
+    
+    VMScheduleThreads();
+  }
+  
+  void VMScheduleThreads() {
+    Thread *tmp = NULL;
+    if(!highQ.empty()) {
+      tmp = highQ.front();
+      highQ.pop();
+    } else if (!medQ.empty()) {
+      tmp = medQ.front();
+      medQ.pop();
+    } else if (!lowQ.empty()) {
+      tmp = lowQ.front();
+      lowQ.pop();
+    } else if (!jamezQ.empty()) {
+      tmp = jamezQ.front();
+      jamezQ.pop();
+    }
+    if(tmp != NULL) {
+      tmp->run();
+    }
+  }  
   
 
 }
