@@ -13,7 +13,7 @@ extern "C" {
   int _machinetickms;
   volatile unsigned long _total_ticks;
   volatile TMachineSignalStateRef _signalstate;
-  std::vector<Thread> _threads;
+  std::vector<Thread*> _threads;
   TVMThreadID _ntid;
   long long unsigned int _largestprime;
   long long unsigned int _largesttest;
@@ -96,11 +96,12 @@ extern "C" {
       delete mcntxref;
       free(tStack);
     }
+
   };
   Thread *getThreadByID(TVMThreadID id) {
     for(unsigned int i = 0; i < _threads.size(); ++i) {
-      if(_threads[i].getID() == id) {
-	return &(_threads[i]);
+      if(_threads[i]->getID() == id) {
+	return _threads[i];
       }
     }
     return NULL;
@@ -118,7 +119,7 @@ extern "C" {
     TVMMainEntry VMLoadModule(const char *module);
     void VMAlarmCallback(void* data);
     
-    _current_thread = UINT_MAX;
+    _current_thread = 0;
     _ntid = 0;
     _tickms = tickms;
     _machinetickms = machinetickms;
@@ -136,7 +137,7 @@ extern "C" {
     
     //Create Thread for VM (ID = 0)
     printf("Creating Main Thread: tid = %d\n",_ntid);
-    VMThreadCreate(NULL, NULL, 10, VM_THREAD_PRIORITY_NORMAL, &_ntid);
+    VMThreadCreate(timetokill, NULL, 10, VM_THREAD_PRIORITY_NORMAL, &_ntid);
     
 
     //create dummy thread (ID = 1)
@@ -187,49 +188,55 @@ extern "C" {
 
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     MachineSuspendSignals(_signalstate);
-    _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
-    // *tid = _threads.back().getID();
+    Thread *thread = new Thread(entry,param,memsize,prio,_ntid);
+    _threads.push_back(thread);
+    *tid = _threads.back()->getID();
     ++_ntid;
     MachineResumeSignals(_signalstate);
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
   }
   
   void timetokill(void* param){
-      while(1){
+    bool prime = true;
+    while(1){
 	for(long long unsigned int i = 2; i < _largesttest/2; ++i){
-             if( _largesttest%i != 0 ){
-                 ++_largesttest;
+             if( _largesttest%i == 0 ){
+                prime = false;
                 break;
             }
           }
+          if(prime){
           _largestprime = _largesttest;
+          printf("%llu\n",_largestprime);
+          }
           ++_largesttest;
+          prime = true;
       }
   }
   
   TVMStatus VMThreadActivate(TVMThreadID thread){
     MachineSuspendSignals(_signalstate);
     for(unsigned int i = 0; i < _threads.size(); ++i){
-        if(_threads[i].getID() == thread){
+        if(_threads[i]->getID() == thread){
             //thread must be dead
-            if(_threads[i].getState() != VM_THREAD_STATE_DEAD){
+            if(_threads[i]->getState() != VM_THREAD_STATE_DEAD){
                 return VM_STATUS_ERROR_INVALID_STATE;
             }
             //set state
-            _threads[i].setState(VM_THREAD_STATE_READY);
+            _threads[i]->setState(VM_THREAD_STATE_READY);
             //push in Q
-            TVMThreadPriority prio = _threads[i].getPriority();
+            TVMThreadPriority prio = _threads[i]->getPriority();
             if(prio == VM_THREAD_PRIORITY_HIGH ){
-                highQ.push(&_threads[i]);
+                highQ.push(_threads[i]);
             }
             else if(prio == VM_THREAD_PRIORITY_NORMAL ){
-                medQ.push(&_threads[i]);
+                medQ.push(_threads[i]);
             }
             else if(prio == VM_THREAD_PRIORITY_LOW){
-                lowQ.push(&_threads[i]);
+                lowQ.push(_threads[i]);
             }
             else if( prio ==0){
-                jamezQ.push(&_threads[i]);
+                jamezQ.push(_threads[i]);
             }
             else{
                 return VM_STATUS_FAILURE;
