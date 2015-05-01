@@ -51,7 +51,10 @@ extern "C" {
         TVMThreadID getID(){
             return tThreadID;
         }
-        
+    ~Thread() {
+      delete mcntxref;
+      free(tStack);
+    }
   };
 
 
