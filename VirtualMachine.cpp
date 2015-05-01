@@ -8,8 +8,7 @@
 #include <climits>
 extern "C" {
   class Thread;
-  void timetokill(void* param);
-  
+
   int _tickms;
   int _machinetickms;
   volatile unsigned long _total_ticks;
@@ -21,9 +20,12 @@ extern "C" {
   std::queue<Thread*> highQ, medQ, lowQ, jamezQ;
 //pronounced qwa
   TVMThreadID _current_thread;
+  
   TVMStatus VMThreadID(TVMThreadIDRef threadref);
   Thread *getThreadByID(TVMThreadID id);
+  void timetokill(void* param);
   void VMScheduleThreads();
+  
   class Thread{
   private:
     TVMMemorySize tStackSize;
@@ -48,8 +50,10 @@ extern "C" {
       mcntxref = new SMachineContext;
       tThreadState = VM_THREAD_STATE_DEAD;
       tTick = 0;
-      MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
-            
+      //special case for our first thread (The VM itself)
+      if(tThreadEntry != NULL){
+        MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
+      }
     }
     TVMThreadID getID(){
       return tThreadID;
@@ -66,20 +70,23 @@ extern "C" {
     void run() {
       //MachineSuspendSignals(_signalstate); // MachineContextRestore never returns, so we can't wrap
       // I think...
+      printf("In Run. Thread id: %u\n",this->tThreadID);
       setState(VM_THREAD_STATE_RUNNING);
       TVMThreadID ref;
       VMThreadID(&ref);
-      if(ref == UINT_MAX) { // This is our first thread
-	_current_thread = this->tThreadID;
-	MachineContextRestore(mcntxref);
-	printf("HELLO\n");
-      } else {
-	Thread *x = getThreadByID(ref);
-	// do a get priority right here, if the current running threads priority is higher than ours don't switch.
-	x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
-	VMThreadActivate(ref);
-	MachineContextSwitch(x->getRef(),this->mcntxref);
-      }
+      printf("Grabbed reference. Thread id: %u\n",ref);
+      /*if(ref == UINT_MAX) { // This is our first thread
+    	printf("HELLO\n");
+	    _current_thread = this->tThreadID;
+	    MachineContextRestore(mcntxref);
+      } else {*/
+      
+	  Thread *x = getThreadByID(ref);
+	  // do a get priority right here, if the current running threads priority is higher than ours don't switch.
+	  x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
+	  VMThreadActivate(ref);
+	  MachineContextSwitch(x->getRef(),this->mcntxref);
+      
       //MachineResumeSignals(_signalstate);
     }
     SMachineContextRef getRef() {
@@ -127,11 +134,16 @@ extern "C" {
     MachineEnableSignals();
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
     
-
-    //create dummy thread
-    VMThreadCreate(timetokill, NULL, 1024, 000, &_ntid);
-    VMThreadActivate(0);
+    //Create Thread for VM (ID = 0)
+    printf("Creating Main Thread: tid = %d\n",_ntid);
+    VMThreadCreate(NULL, NULL, 10, VM_THREAD_PRIORITY_NORMAL, &_ntid);
     
+
+    //create dummy thread (ID = 1)
+    VMThreadCreate(timetokill, NULL, 0x100000, 000, &_ntid); //was informed we need at least 10k
+    VMThreadActivate(_ntid-1);
+    
+    printf("Thread %d activated\n",(_ntid-1));
     //load and call module
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
@@ -236,16 +248,21 @@ extern "C" {
   
   void VMScheduleThreads() {
     Thread *tmp = NULL;
+    printf("Scheduling\n");
     if(!highQ.empty()) {
+      printf("High Priority Found\n");
       tmp = highQ.front();
       highQ.pop();
     } else if (!medQ.empty()) {
+      printf("Normal Priority Found\n");
       tmp = medQ.front();
       medQ.pop();
     } else if (!lowQ.empty()) {
+      printf("Low Priority Found\n");
       tmp = lowQ.front();
       lowQ.pop();
     } else if (!jamezQ.empty()) {
+      printf("Jamez Priority Found\n");
       tmp = jamezQ.front();
       jamezQ.pop();
     }
