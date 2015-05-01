@@ -40,9 +40,9 @@ extern "C" {
                 tThreadPriority = prio;
                 tThreadID = tid;
                 tStack = malloc(tStackSize);
+		mcntxref = new SMachineContext;
                 tThreadState = VM_THREAD_STATE_DEAD;
                 tTick = 0;
-                
                 MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
             
         }
@@ -124,8 +124,9 @@ extern "C" {
   
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     MachineSuspendSignals(_signalstate);
-    _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
-    *tid = _threads.back().getID();
+    Thread(entry,param,memsize,prio,_ntid);
+    // _threads.push_back(Thread(entry,param,memsize,prio,_ntid));
+    // *tid = _threads.back().getID();
     ++_ntid;
     MachineResumeSignals(_signalstate);
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
@@ -144,7 +145,6 @@ extern "C" {
           ++_largesttest;
           * */
       }
-      
   }
   
   
