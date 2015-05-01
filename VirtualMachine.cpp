@@ -14,6 +14,8 @@ extern "C" {
   volatile TMachineSignalStateRef _signalstate;
   std::vector<Thread> _threads;
   int _ntid;
+  long long unsigned int _largestprime;
+  long long unsigned int _largesttest;
 
 
   class Thread{
@@ -60,6 +62,8 @@ extern "C" {
     TVMMainEntry module_main = NULL;
     int alarmtick = 100*_tickms;
     _total_ticks = 0;
+    _largestprime = 2;
+    _largesttest = 3;
     
     
     //initialize machine
@@ -119,6 +123,19 @@ extern "C" {
     return VM_STATUS_SUCCESS; //Just a dummy for compilation
   }
   
+  void timetokill(void* param){
+      while(1){
+          for(long long unsigned int i = 2; i < _largesttest/2; ++i){
+             if( _largesttest%i != 0 ){
+                 ++_largesttest;
+                break;
+            }
+          }
+          _largestprime = _largesttest;
+          ++_largesttest;
+      }
+      
+  }
   
   
 
