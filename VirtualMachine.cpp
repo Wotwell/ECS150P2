@@ -68,26 +68,23 @@ extern "C" {
       tThreadState = state;
     }
     void run() {
-      //MachineSuspendSignals(_signalstate); // MachineContextRestore never returns, so we can't wrap
-      // I think...
       printf("In Run. Thread id: %u\n",this->tThreadID);
       setState(VM_THREAD_STATE_RUNNING);
       TVMThreadID ref;
       VMThreadID(&ref);
       printf("Grabbed reference. Thread id: %u\n",ref);
-      /*if(ref == UINT_MAX) { // This is our first thread
-    	printf("HELLO\n");
-	    _current_thread = this->tThreadID;
-	    MachineContextRestore(mcntxref);
-      } else {*/
+      Thread *x = getThreadByID(ref);
+      // do a get priority right here, if the current running threads priority is higher than ours don't switch.
+      // Actually do this in schedule silly.
       
-	  Thread *x = getThreadByID(ref);
-	  // do a get priority right here, if the current running threads priority is higher than ours don't switch.
-	  x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
-	  VMThreadActivate(ref);
-	  MachineContextSwitch(x->getRef(),this->mcntxref);
-      
-      //MachineResumeSignals(_signalstate);
+      // Only activate it if it was activated before.
+      if(x->getState() == VM_THREAD_STATE_READY || 
+	 x->getState() == VM_THREAD_STATE_RUNNING) {
+	x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
+	VMThreadActivate(ref);
+      }
+      printf("Switched from thread %u to thread %u\n",ref,tThreadID);
+      MachineContextSwitch(x->getRef(),this->mcntxref);
     }
     SMachineContextRef getRef() {
       return mcntxref;
@@ -129,28 +126,30 @@ extern "C" {
     _largestprime = 2;
     _largesttest = 3;
     
-    
+    printf("In VMStart\n");
     //initialize machine
     MachineInitialize(_machinetickms);
     MachineEnableSignals();
-    MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
     
     //Create Thread for VM (ID = 0)
-    printf("Creating Main Thread: tid = %d\n",_ntid);
+    //printf("Creating Main Thread: tid = %d\n",_ntid);
     VMThreadCreate(timetokill, NULL, 10, VM_THREAD_PRIORITY_NORMAL, &_ntid);
     
 
     //create dummy thread (ID = 1)
     VMThreadCreate(timetokill, NULL, 0x100000, 000, &_ntid); //was informed we need at least 10k
-    VMThreadActivate(_ntid-1);
+    VMThreadActivate(1);
     
-    printf("Thread %d activated\n",(_ntid-1));
+    //printf("Thread %d activated\n",(_ntid-1));
     //load and call module
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
       return VM_STATUS_FAILURE;
     //module_main(argc,argv);
     //VMThreadCreate(module_main, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid);
+    
+    // We do it last to make sure it doesn't run before we activate.
+    MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
     VMScheduleThreads();
     return VM_STATUS_SUCCESS;
   }
@@ -187,6 +186,7 @@ extern "C" {
   }
 
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
+    printf("In VMThreadCreate, tid = %u\n",_ntid);
     MachineSuspendSignals(_signalstate);
     Thread *thread = new Thread(entry,param,memsize,prio,_ntid);
     _threads.push_back(thread);
@@ -197,6 +197,8 @@ extern "C" {
   }
   
   void timetokill(void* param){
+    printf("In timetokill.\n");
+    MachineEnableSignals(); // Won't int without it.
     bool prime = true;
     while(1){
 	for(long long unsigned int i = 2; i < _largesttest/2; ++i){
@@ -207,7 +209,6 @@ extern "C" {
           }
           if(prime){
           _largestprime = _largesttest;
-          printf("%llu\n",_largestprime);
           }
           _largesttest=_largesttest+2;
           prime = true;
@@ -216,13 +217,16 @@ extern "C" {
   
   TVMStatus VMThreadActivate(TVMThreadID thread){
     MachineSuspendSignals(_signalstate);
+    printf("In VMThreadActivate, with thread %u\n",thread);
     for(unsigned int i = 0; i < _threads.size(); ++i){
         if(_threads[i]->getID() == thread){
             //thread must be dead
             if(_threads[i]->getState() != VM_THREAD_STATE_DEAD){
+	      printf("WILL NOT ACTIVATE, THREAD IS NOT DEAD.\n");
                 return VM_STATUS_ERROR_INVALID_STATE;
             }
             //set state
+	    printf("Activated thread.\n");
             _threads[i]->setState(VM_THREAD_STATE_READY);
             //push in Q
             TVMThreadPriority prio = _threads[i]->getPriority();
@@ -248,6 +252,7 @@ extern "C" {
   }
 
   void VMAlarmCallback(void* data){
+    //printf("In VMAlarmCallback\n");
     _total_ticks++;
     
     VMScheduleThreads();
@@ -269,7 +274,7 @@ extern "C" {
       tmp = lowQ.front();
       lowQ.pop();
     } else if (!jamezQ.empty()) {
-      printf("Jamez Priority Found\n");
+      printf("JamezQ Priority Found\n");
       tmp = jamezQ.front();
       jamezQ.pop();
     }
