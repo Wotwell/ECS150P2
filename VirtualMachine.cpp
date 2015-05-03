@@ -151,7 +151,10 @@ extern "C" {
     
     // We do it last to make sure it doesn't run before we activate.
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
-    VMScheduleThreads();
+    VMScheduleThreads(); // Main stops excuting here, once it starts
+			 // again (by switching back to
+			 // the main thread). The machine exits.
+    printf("Exiting VMStart.\n");
     return VM_STATUS_SUCCESS;
   }
 
@@ -263,7 +266,7 @@ extern "C" {
       // We have nothing left to do but to terminate.
       // We terminate by letting VMMain finish.
       printf("We are only killing time now... might as well die.\n");
-      getThreadByID(0)->run();
+      VMThreadActivate(0);
     }
     VMScheduleThreads();
   }
