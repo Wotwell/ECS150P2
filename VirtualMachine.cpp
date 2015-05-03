@@ -30,6 +30,8 @@ extern "C" {
   TVMStatus VMThreadTerminate(TVMThreadID thread);
   void skeleton(void* param);
   void mainSkel(void* param);
+  TVMStatus VMThreadState(TVMThreadID thread, TVMThreadStateRef stateref);
+
   
   struct skelArg{
     TVMThreadEntry entry;
@@ -342,15 +344,15 @@ extern "C" {
     } else {
       prio = cur_thread->getPriority();
     }
-    if(!highQ.empty() && prio < VM_THREAD_PRIORITY_HIGH) {
+    if(!highQ.empty() && prio <= VM_THREAD_PRIORITY_HIGH) {
       printf("High Priority Found\n");
       tmp = highQ.front();
       highQ.pop();
-    } else if (!medQ.empty() && prio < VM_THREAD_PRIORITY_NORMAL) {
+    } else if (!medQ.empty() && prio <= VM_THREAD_PRIORITY_NORMAL) {
       printf("Normal Priority Found\n");
       tmp = medQ.front();
       medQ.pop();
-    } else if (!lowQ.empty() && prio < VM_THREAD_PRIORITY_LOW) {
+    } else if (!lowQ.empty() && prio <= VM_THREAD_PRIORITY_LOW) {
       printf("Low Priority Found\n");
       tmp = lowQ.front();
       lowQ.pop();
@@ -397,6 +399,22 @@ extern "C" {
       }
       printf("Thread %u deleted.\n", thread);
       MachineResumeSignals(_signalstate);
+      
+      return VM_STATUS_SUCCESS;
+  }
+
+  TVMStatus VMThreadState(TVMThreadID thread, TVMThreadStateRef stateref){
+      MachineSuspendSignals(_signalstate);
+      Thread *tmp = getThreadByID(thread);  
+      if(tmp == NULL){
+          MachineResumeSignals(_signalstate);
+          return VM_STATUS_ERROR_INVALID_ID;
+      }
+      if(stateref == NULL){
+          MachineResumeSignals(_signalstate);
+          return VM_STATUS_ERROR_INVALID_PARAMETER;          
+      }
+      *stateref = tmp->getState();
       
       return VM_STATUS_SUCCESS;
   }
