@@ -26,6 +26,21 @@ extern "C" {
   Thread *getThreadByID(TVMThreadID id);
   void timetokill(void* param);
   void VMScheduleThreads();
+  TVMStatus VMThreadDelete(TVMThreadID thread);
+  TVMStatus VMThreadTerminate(TVMThreadID thread);
+  void skeleton(void* param);
+  void mainSkel(void* param);
+  
+  struct skelArg{
+    TVMThreadEntry entry;
+    void* param;
+  };
+  
+  struct mainArg{
+    TVMMainEntry entry;
+    int argc;
+    char **argv;
+  };
   
   class Thread{
   private:
@@ -75,16 +90,23 @@ extern "C" {
       VMThreadID(&ref);
       printf("Grabbed reference. Thread id: %u\n",ref);
       Thread *x = getThreadByID(ref);
-      // Only activate it if it was activated before.
-      if(x->getState() == VM_THREAD_STATE_READY || 
-	 x->getState() == VM_THREAD_STATE_RUNNING) {
-	// we set it to dead just so we can activate it immediatly.
-	x->setState(VM_THREAD_STATE_DEAD);
-	VMThreadActivate(ref);
+      if(x != NULL){
+          // Only activate it if it was activated before.
+          if(x->getState() == VM_THREAD_STATE_READY || 
+             x->getState() == VM_THREAD_STATE_RUNNING) {
+            // we set it to dead just so we can activate it immediatly.
+            x->setState(VM_THREAD_STATE_DEAD);
+            VMThreadActivate(ref);
+            
+          }
+          printf("Switched from thread %u to thread %u\n",ref,tThreadID);
+          _current_thread = this->tThreadID;
+          MachineContextSwitch(x->getRef(),this->mcntxref);
       }
-      printf("Switched from thread %u to thread %u\n",ref,tThreadID);
-      _current_thread = this->tThreadID;
-      MachineContextSwitch(x->getRef(),this->mcntxref);
+      else{
+          MachineContextRestore(this->mcntxref);
+          printf("Switched to thread %u\n", tThreadID);
+      }
     }
     SMachineContextRef getRef() {
       return mcntxref;
@@ -146,8 +168,13 @@ extern "C" {
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
       return VM_STATUS_FAILURE;
-    //module_main(argc,argv);
-    //VMThreadCreate(module_main, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid);
+    struct mainArg *main = new struct mainArg;
+    main->entry = module_main;
+    main->argc = argc;
+    main->argv = argv;
+    
+    VMThreadCreate(mainSkel, main, 0x100000, VM_THREAD_PRIORITY_NORMAL, &_ntid);
+    VMThreadActivate(_ntid-1);
     
     // We do it last to make sure it doesn't run before we activate.
     MachineRequestAlarm(alarmtick, VMAlarmCallback, NULL);
@@ -192,7 +219,16 @@ extern "C" {
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
     printf("In VMThreadCreate, tid = %u\n",_ntid);
     MachineSuspendSignals(_signalstate);
-    Thread *thread = new Thread(entry,param,memsize,prio,_ntid);
+    Thread *thread;
+    if(_threads.size() >= 2){ //not VMMain or time to kill
+        struct skelArg *newParam = new struct skelArg;
+        newParam->entry = entry;
+        newParam->param = param;
+        thread = new Thread(skeleton,newParam,memsize,prio,_ntid);
+    }
+    else{
+        thread = new Thread(entry,param,memsize,prio,_ntid);
+    }
     _threads.push_back(thread);
     *tid = _threads.back()->getID();
     ++_ntid;
@@ -221,6 +257,24 @@ extern "C" {
       _largesttest=_largesttest+2;
       prime = true;
     }
+  }
+  
+  void skeleton(void* param){
+    struct skelArg *args = (struct skelArg*) param;
+    args->entry(args->param);
+    delete args;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    VMThreadTerminate(cur);
+    VMThreadDelete(cur);
+    printf("In skeleton, finished deleting thread %u",cur);
+    VMScheduleThreads();
+  }
+  
+  void mainSkel(void* param){
+      struct mainArg *args = (struct mainArg*) param;
+      args->entry(args->argc,args->argv);
+      delete args;
   }
   
   TVMStatus VMThreadActivate(TVMThreadID thread){
@@ -273,12 +327,16 @@ extern "C" {
   
   void VMScheduleThreads() {
     Thread *tmp = NULL;
+    MachineSuspendSignals(_signalstate);
     // First lets get the priority of the current thread.
     TVMThreadPriority prio;
     TVMThreadID cur;
     VMThreadID(&cur);
     Thread *cur_thread = getThreadByID(cur);
-    if(cur_thread->getState() != VM_THREAD_STATE_RUNNING) {
+    if(cur_thread == NULL){
+        prio = 0;
+    }
+    else if(cur_thread->getState() != VM_THREAD_STATE_RUNNING) {
       // It's not even running, lets activate the waiting thread.
       prio = 0;
     } else {
@@ -301,10 +359,46 @@ extern "C" {
       tmp = jamezQ.front();
       jamezQ.pop();
     }
+    MachineResumeSignals(_signalstate);
     if(tmp != NULL) {
       tmp->run();
     }
+    
   }  
   
+  TVMStatus VMThreadTerminate(TVMThreadID thread){
+      //Deal with mutexes
+      printf("Terminating thread %u\n",thread);
+      MachineSuspendSignals(_signalstate);
+      Thread *tmp = getThreadByID(thread);  
+      if(tmp == NULL){
+          MachineResumeSignals(_signalstate);
+          return VM_STATUS_ERROR_INVALID_ID;
+      }
+      if(tmp->getState() == VM_THREAD_STATE_DEAD){
+          MachineResumeSignals(_signalstate);
+          return VM_STATUS_ERROR_INVALID_STATE;          
+      }
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      MachineResumeSignals(_signalstate);
+      return VM_STATUS_SUCCESS;
+  }
+  
+  TVMStatus VMThreadDelete(TVMThreadID thread){
+      MachineSuspendSignals(_signalstate);
+      printf("Deleting thread %u\n",thread);
+      //Thread *tmp;
+      for(unsigned int i = 0; i < _threads.size(); ++i) {
+        if(_threads[i]->getID() == thread) {
+          //tmp = _threads[i];
+          _threads.erase(_threads.begin()+i);
+         // delete tmp;
+        }
+      }
+      printf("Thread %u deleted.\n", thread);
+      MachineResumeSignals(_signalstate);
+      
+      return VM_STATUS_SUCCESS;
+  }
 
 }
