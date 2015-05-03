@@ -14,6 +14,7 @@ extern "C" {
   volatile unsigned long _total_ticks;
   volatile TMachineSignalStateRef _signalstate;
   std::vector<Thread*> _threads;
+  std::vector<Thread*> _sleeping_threads;
   TVMThreadID _ntid;
   long long unsigned int _largestprime;
   long long unsigned int _lastlargestprime;
@@ -21,6 +22,8 @@ extern "C" {
   std::queue<Thread*> highQ, medQ, lowQ, jamezQ;
 //pronounced qwa
   TVMThreadID _current_thread;
+  Thread *to_deletes[2]; // Threads to be deleted.
+		      // Because a thread can't delete itself!
   
   TVMStatus VMThreadID(TVMThreadIDRef threadref);
   Thread *getThreadByID(TVMThreadID id);
@@ -56,9 +59,11 @@ extern "C" {
     TVMThreadEntry tThreadEntry;
     void* tEntryParam;
     void* tStack;
+    TVMTick sleep;
     SMachineContextRef mcntxref; 
   public:
     Thread(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadID tid){
+      sleep = 0;
       tThreadEntry = entry;
       tEntryParam = param;
       tStackSize = memsize;
@@ -72,6 +77,12 @@ extern "C" {
       if(tThreadEntry != NULL){
         MachineContextCreate( mcntxref, tThreadEntry, tEntryParam, tStack, tStackSize);
       }
+    }
+    void setSleep(TVMTick sleep) {
+      this->sleep = sleep;
+    }
+    TVMTick getSleep() {
+      return sleep;
     }
     TVMThreadID getID(){
       return tThreadID;
@@ -97,7 +108,7 @@ extern "C" {
           if(x->getState() == VM_THREAD_STATE_READY || 
              x->getState() == VM_THREAD_STATE_RUNNING) {
             // we set it to dead just so we can activate it immediatly.
-            x->setState(VM_THREAD_STATE_DEAD);
+	    x->setState(VM_THREAD_STATE_DEAD);
             VMThreadActivate(ref);
             
           }
@@ -106,16 +117,19 @@ extern "C" {
           MachineContextSwitch(x->getRef(),this->mcntxref);
       }
       else{
-          MachineContextRestore(this->mcntxref);
-          printf("Switched to thread %u\n", tThreadID);
+	_current_thread = this->tThreadID;
+	printf("Switched to thread %u\n", tThreadID);
+	MachineContextRestore(this->mcntxref);
       }
     }
     SMachineContextRef getRef() {
       return mcntxref;
     }    
     ~Thread() {
+      printf("IN Thread %u deconstructor\n",tThreadID);
       delete mcntxref;
       free(tStack);
+      printf("Finished Thread %u deconstructor\n",tThreadID);
     }
 
   };
@@ -150,6 +164,8 @@ extern "C" {
     _largestprime = 2;
     _lastlargestprime = 1;
     _largesttest = 3;
+    to_deletes[0] = NULL; // Nothing to delete yet
+    to_deletes[1] = NULL; // 
     
     printf("In VMStart\n");
     //initialize machine
@@ -158,7 +174,7 @@ extern "C" {
     
     //Create Thread for VM (ID = 0)
     //printf("Creating Main Thread: tid = %d\n",_ntid);
-    VMThreadCreate(timetokill, NULL, 10, VM_THREAD_PRIORITY_NORMAL, &_ntid);
+    VMThreadCreate(timetokill, NULL, 10, VM_THREAD_PRIORITY_LOW, &_ntid);
     
 
     //create dummy thread (ID = 1)
@@ -191,7 +207,9 @@ extern "C" {
     if(data == NULL || length == NULL)
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     int what_is_left;
+    printf("###: \n");
     what_is_left = write(filedescriptor,(char *)data,*length);
+    printf("###: \n");
     if(what_is_left == -1)
       return VM_STATUS_FAILURE;
     *length = what_is_left; // This is how we tell who called us how much we
@@ -200,22 +218,17 @@ extern "C" {
   }
   
   TVMStatus VMThreadSleep(TVMTick tick) {
-    /*
-    printf("Starting sleep, ticks at %ld\n",_total_ticks);
-    unsigned long end_time = _total_ticks + tick;
-    unsigned long last_tick = _total_ticks;
-    while(_total_ticks < end_time) {
-      //sleep(100);
-      // if(last_tick != _total_ticks) {
-      // 	printf("It ticked, you prick\n");
-      // 	last_tick = _total_ticks;
-      // }
-
-    }
-    printf("Ending sleep, ticks at %ld\n",_total_ticks);
-    */
+    MachineSuspendSignals(_signalstate);
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    printf("Thread %u is tired and needs to sleep for %u ticks.\n",cur,tick);
+    Thread *x = getThreadByID(cur);
+    x->setState(VM_THREAD_STATE_WAITING);
+    x->setSleep(tick);
+    _sleeping_threads.push_back(x);
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
     return VM_STATUS_SUCCESS;
-    
   }
 
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
@@ -269,7 +282,7 @@ extern "C" {
     VMThreadID(&cur);
     VMThreadTerminate(cur);
     VMThreadDelete(cur);
-    printf("In skeleton, finished deleting thread %u",cur);
+    printf("In skeleton, finished deleting thread %u\n",cur);
     VMScheduleThreads();
   }
   
@@ -316,7 +329,19 @@ extern "C" {
   }
 
   void VMAlarmCallback(void* data){
-    //printf("In VMAlarmCallback\n");
+    // Lets deal with sleepy sheepys
+    TVMTick tmp;
+    for(int i = _sleeping_threads.size() - 1; i >= 0; --i) {
+      tmp = _sleeping_threads[i]->getSleep();
+      if(tmp == 0) {
+	_sleeping_threads[i]->setState(VM_THREAD_STATE_DEAD);
+	printf("Waking thread %u from it's nap\n",_sleeping_threads[i]->getID());
+	VMThreadActivate(_sleeping_threads[i]->getID());
+	_sleeping_threads.erase(_sleeping_threads.begin()+i);
+      } else {
+	_sleeping_threads[i]->setSleep(tmp - 1);
+      }
+    }
     _total_ticks++;
     if(_threads.size() == 2) {
       // We have nothing left to do but to terminate.
@@ -335,6 +360,20 @@ extern "C" {
     TVMThreadID cur;
     VMThreadID(&cur);
     Thread *cur_thread = getThreadByID(cur);
+    if(to_deletes[0] != NULL) {
+      if(cur != to_deletes[0]->getID()) {
+	printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[0]->getID());
+	delete to_deletes[0];
+	to_deletes[0] = NULL;
+      }
+    }
+    if(to_deletes[1] != NULL) {
+      if(cur != to_deletes[1]->getID()) {
+	printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[1]->getID());
+	delete to_deletes[1];
+	to_deletes[1] = NULL;
+      }
+    }
     if(cur_thread == NULL){
         prio = 0;
     }
@@ -389,12 +428,18 @@ extern "C" {
   TVMStatus VMThreadDelete(TVMThreadID thread){
       MachineSuspendSignals(_signalstate);
       printf("Deleting thread %u\n",thread);
-      //Thread *tmp;
+      Thread *tmp;
       for(unsigned int i = 0; i < _threads.size(); ++i) {
         if(_threads[i]->getID() == thread) {
-          //tmp = _threads[i];
+          tmp = _threads[i];
           _threads.erase(_threads.begin()+i);
-         // delete tmp;
+	  if(to_deletes[0] == NULL) {
+	    to_deletes[0] = tmp;
+	  } else if(to_deletes[1] == NULL) {
+	    to_deletes[1] = tmp;
+	  } else {
+	    printf("Major issue, no place to delete this thread!\n");
+	  }
         }
       }
       printf("Thread %u deleted.\n", thread);
