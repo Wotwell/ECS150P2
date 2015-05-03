@@ -75,16 +75,15 @@ extern "C" {
       VMThreadID(&ref);
       printf("Grabbed reference. Thread id: %u\n",ref);
       Thread *x = getThreadByID(ref);
-      // do a get priority right here, if the current running threads priority is higher than ours don't switch.
-      // Actually do this in schedule silly.
-      
       // Only activate it if it was activated before.
       if(x->getState() == VM_THREAD_STATE_READY || 
 	 x->getState() == VM_THREAD_STATE_RUNNING) {
-	x->setState(VM_THREAD_STATE_DEAD); // we set it to dead just so we can activate it immediatly.
+	// we set it to dead just so we can activate it immediatly.
+	x->setState(VM_THREAD_STATE_DEAD);
 	VMThreadActivate(ref);
       }
       printf("Switched from thread %u to thread %u\n",ref,tThreadID);
+      _current_thread = this->tThreadID;
       MachineContextSwitch(x->getRef(),this->mcntxref);
     }
     SMachineContextRef getRef() {
@@ -260,7 +259,12 @@ extern "C" {
   void VMAlarmCallback(void* data){
     //printf("In VMAlarmCallback\n");
     _total_ticks++;
-    
+    if(_threads.size() == 2) {
+      // We have nothing left to do but to terminate.
+      // We terminate by letting VMMain finish.
+      printf("We are only killing time now... might as well die.\n");
+      getThreadByID(0)->run();
+    }
     VMScheduleThreads();
   }
   
