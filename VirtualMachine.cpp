@@ -16,6 +16,7 @@ extern "C" {
   std::vector<Thread*> _threads;
   TVMThreadID _ntid;
   long long unsigned int _largestprime;
+  long long unsigned int _lastlargestprime;
   long long unsigned int _largesttest;
   std::queue<Thread*> highQ, medQ, lowQ, jamezQ;
 //pronounced qwa
@@ -124,6 +125,7 @@ extern "C" {
     int alarmtick = 100*_tickms; // milliseconds to microseconds conversion
     _total_ticks = 0;
     _largestprime = 2;
+    _lastlargestprime = 1;
     _largesttest = 3;
     
     printf("In VMStart\n");
@@ -201,18 +203,22 @@ extern "C" {
     MachineEnableSignals(); // Won't int without it.
     bool prime = true;
     while(1){
-	for(long long unsigned int i = 2; i < _largesttest/2; ++i){
-             if( _largesttest%i == 0 ){
-                prime = false;
-                break;
-            }
-          }
-          if(prime){
-          _largestprime = _largesttest;
-          }
-          _largesttest=_largesttest+2;
-          prime = true;
+      for(long long unsigned int i = 2; i < _largesttest/2; ++i){
+	if( _largesttest%i == 0 ){
+	  prime = false;
+	  break;
+	}
       }
+      if(prime){
+	_largestprime = _largesttest;
+	if(_largestprime > _lastlargestprime * 2) {
+	  printf("Reached prime milestone: %llu\n",_largestprime);
+	  _lastlargestprime = _largestprime;
+	}
+      }
+      _largesttest=_largesttest+2;
+      prime = true;
+    }
   }
   
   TVMStatus VMThreadActivate(TVMThreadID thread){
@@ -260,20 +266,30 @@ extern "C" {
   
   void VMScheduleThreads() {
     Thread *tmp = NULL;
-    printf("Scheduling\n");
-    if(!highQ.empty()) {
+    // First lets get the priority of the current thread.
+    TVMThreadPriority prio;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *cur_thread = getThreadByID(cur);
+    if(cur_thread->getState() != VM_THREAD_STATE_RUNNING) {
+      // It's not even running, lets activate the waiting thread.
+      prio = 0;
+    } else {
+      prio = cur_thread->getPriority();
+    }
+    if(!highQ.empty() && prio < VM_THREAD_PRIORITY_HIGH) {
       printf("High Priority Found\n");
       tmp = highQ.front();
       highQ.pop();
-    } else if (!medQ.empty()) {
+    } else if (!medQ.empty() && prio < VM_THREAD_PRIORITY_NORMAL) {
       printf("Normal Priority Found\n");
       tmp = medQ.front();
       medQ.pop();
-    } else if (!lowQ.empty()) {
+    } else if (!lowQ.empty() && prio < VM_THREAD_PRIORITY_LOW) {
       printf("Low Priority Found\n");
       tmp = lowQ.front();
       lowQ.pop();
-    } else if (!jamezQ.empty()) {
+    } else if (!jamezQ.empty() && prio == 0) {
       printf("JamezQ Priority Found\n");
       tmp = jamezQ.front();
       jamezQ.pop();
