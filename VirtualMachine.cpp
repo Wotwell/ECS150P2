@@ -161,6 +161,26 @@ extern "C" {
       }
       return threads.front();
     }
+    void tickDownThreads() {
+      TVMTick t;
+      Thread *x;
+      // > 0 cause we don't care about the owner.
+      for(unsigned int i = threads.size() - 1;i > 0; --i) {
+	t = threads[i]->getSleep();
+	if(t == VM_TIMEOUT_INFINITE) { // we wait forever
+	  continue;
+	} else {
+	  --t;
+	  threads[i]->setSleep(t);
+	  if(t == 0) {
+	    x = threads[i];
+	    threads.erase(threads.begin()+i);
+	    x->setState(VM_THREAD_STATE_DEAD);
+	    VMThreadActivate(x->getID());
+	  }
+	}
+      }
+    }
     // Return true if we were first in line.
     bool acquire(Thread *x) {
       threads.push_back(x);
@@ -168,6 +188,25 @@ extern "C" {
     }
     void release() {
       threads.erase(threads.begin());
+    }
+    // Check if a thread is waiting.
+    bool isWaiting(Thread *x) {
+      // if(isFree() || x == owner())
+      // 	return false;
+      for(unsigned int i = 1;i < threads.size(); ++i) {
+	if(x == threads[i])
+	  return true;
+      }
+      return false;
+    }
+    void giveup(Thread *x) {
+      for(unsigned int i = 0;i < threads.size(); ++i) {
+	if(x == threads[i]) {
+	  threads.erase(threads.begin() + i);
+	  return;
+	}
+      }
+      
     }
   };
   Mutex *getMutexByID(TVMMutexID id) {
@@ -377,7 +416,10 @@ extern "C" {
   void VMAlarmCallback(void* data){
     // Lets deal with sleepy sheepys
     TVMTick tmp;
-    for(int i = _sleeping_threads.size() - 1; i >= 0; --i) {
+    for(unsigned int i = 0; i < _mutexes.size();++i) {
+      _mutexes[i]->tickDownThreads();
+    }
+    for(unsigned int i = _sleeping_threads.size() - 1; i >= 0; --i) {
       tmp = _sleeping_threads[i]->getSleep();
       if(tmp == 0) {
 	_sleeping_threads[i]->setState(VM_THREAD_STATE_DEAD);
@@ -495,14 +537,14 @@ extern "C" {
   }
 
   TVMStatus VMThreadState(TVMThreadID thread, TVMThreadStateRef stateref){
-      MachineSuspendSignals(_signalstate);
+    MachineSuspendSignals(_signalstate);
       Thread *tmp = getThreadByID(thread);  
       if(tmp == NULL){
           MachineResumeSignals(_signalstate);
           return VM_STATUS_ERROR_INVALID_ID;
       }
       if(stateref == NULL){
-          MachineResumeSignals(_signalstate);
+	MachineResumeSignals(_signalstate);
           return VM_STATUS_ERROR_INVALID_PARAMETER;          
       }
       *stateref = tmp->getState();
@@ -510,15 +552,18 @@ extern "C" {
       return VM_STATUS_SUCCESS;
   }
   TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
+    MachineSuspendSignals(_signalstate);
     if(mutexref == NULL) {
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
     _mutexes.push_back(new Mutex(_nmid));
     *mutexref = _nmid;
     ++_nmid;
+    MachineResumeSignals(_signalstate);
     return VM_STATUS_SUCCESS;
   }
   TVMStatus VMMutexDelete(TVMMutexID mutex) {
+    MachineSuspendSignals(_signalstate);
     Mutex *x;
     for(int i = _mutexes.size() - 1;i >= 0;--i) {
       if(_mutexes[i]->getID() == mutex) {
@@ -530,6 +575,7 @@ extern "C" {
 	delete x;
       }
     }
+    MachineResumeSignals(_signalstate);
     return VM_STATUS_ERROR_INVALID_ID;
   }
   TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
@@ -548,9 +594,47 @@ extern "C" {
     return VM_STATUS_SUCCESS;
   }
   TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
-    return VM_STATUS_SUCCESS;
+    MachineSuspendSignals(_signalstate);
+    Mutex *x = getMutexByID(mutex);
+    if(x == NULL) {
+      return VM_STATUS_ERROR_INVALID_ID;
+    }
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *now = getThreadByID(cur);
+    if(x->acquire(now)) {
+      return VM_STATUS_SUCCESS;
+    } else {
+      if(timeout == VM_TIMEOUT_IMMEDIATE) {
+	return VM_STATUS_FAILURE;
+      }
+      now->setState(VM_THREAD_STATE_WAITING);
+      now->setSleep(timeout);
+      MachineResumeSignals(_signalstate);
+      VMScheduleThreads();
+    }
+    if(x->owner() == now)
+      return VM_STATUS_SUCCESS;
+    return VM_STATUS_FAILURE;
   }
   TVMStatus VMMutexRelease(TVMMutexID mutex) { 
+    MachineSuspendSignals(_signalstate);
+    Mutex *x = getMutexByID(mutex);
+    if(x == NULL) {
+      return VM_STATUS_ERROR_INVALID_ID;
+    }
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *now = getThreadByID(cur);
+    if(x->owner() != now) {
+      return VM_STATUS_ERROR_INVALID_STATE;
+    }
+    x->release();
+    now = x->owner(); // new owner
+    if(now != NULL) {
+      now->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(now->getID());
+    }
     return VM_STATUS_SUCCESS;
   }
 
