@@ -180,6 +180,7 @@ extern "C" {
     TVMMutexID id;
   public:
     Mutex(TVMMutexID id) {
+      printf("IN MUTEX CONSTRUCTOR id: %u\n",id);
       this->id = id;
     }
     TVMMutexID getID() {
@@ -437,9 +438,9 @@ extern "C" {
   void VMAlarmCallback(void* data){
     // Lets deal with sleepy sheepys
     TVMTick tmp;
-    for(unsigned int i = 0; i < _mutexes.size();++i) {
-      _mutexes[i]->tickDownThreads();
-    }
+    // for(unsigned int i = 0; i < _mutexes.size();++i) {
+    //   _mutexes[i]->tickDownThreads();
+    // }
     for(unsigned int i = _sleeping_threads.size() - 1; i >= 0; --i) {
       tmp = _sleeping_threads[i]->getSleep();
       if(tmp == 0) {
@@ -744,6 +745,7 @@ extern "C" {
   }
   
   TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
+    printf("IN VMMutexCreate\n");
     MachineSuspendSignals(_signalstate);
     if(mutexref == NULL) {
       return VM_STATUS_ERROR_INVALID_PARAMETER;
@@ -755,6 +757,7 @@ extern "C" {
     return VM_STATUS_SUCCESS;
   }
   TVMStatus VMMutexDelete(TVMMutexID mutex) {
+    printf("IN VMMutexDelete\n");
     MachineSuspendSignals(_signalstate);
     Mutex *x;
     for(int i = _mutexes.size() - 1;i >= 0;--i) {
@@ -771,6 +774,7 @@ extern "C" {
     return VM_STATUS_ERROR_INVALID_ID;
   }
   TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
+    printf("IN VMMutexQuery\n");
     if(ownerref == NULL) {
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
@@ -786,6 +790,7 @@ extern "C" {
     return VM_STATUS_SUCCESS;
   }
   TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
+    printf("IN VMMutexAcquire\n");
     MachineSuspendSignals(_signalstate);
     Mutex *x = getMutexByID(mutex);
     if(x == NULL) {
@@ -810,6 +815,7 @@ extern "C" {
     return VM_STATUS_FAILURE;
   }
   TVMStatus VMMutexRelease(TVMMutexID mutex) { 
+    printf("IN VMMutexRelease\n");
     MachineSuspendSignals(_signalstate);
     Mutex *x = getMutexByID(mutex);
     if(x == NULL) {
