@@ -8,14 +8,16 @@
 #include <climits>
 extern "C" {
   class Thread;
-
+  class Mutex;
   int _tickms;
   int _machinetickms;
   volatile unsigned long _total_ticks;
   volatile TMachineSignalStateRef _signalstate;
   std::vector<Thread*> _threads;
+  std::vector<Mutex*> _mutexes;
   std::vector<Thread*> _sleeping_threads;
   TVMThreadID _ntid;
+  TVMMutexID _nmid;
   long long unsigned int _largestprime;
   long long unsigned int _lastlargestprime;
   long long unsigned int _largesttest;
@@ -23,7 +25,7 @@ extern "C" {
 //pronounced qwa
   TVMThreadID _current_thread;
   Thread *to_deletes[2]; // Threads to be deleted.
-		      // Because a thread can't delete itself!
+                         // Because a thread can't delete itself!
   
   TVMStatus VMThreadID(TVMThreadIDRef threadref);
   Thread *getThreadByID(TVMThreadID id);
@@ -39,6 +41,12 @@ extern "C" {
   void readCallback(void *calldata, int result);
   void writeCallback(void *calldata, int result);
   void seekCallback(void *calldata, int result);
+  TVMStatus VMMutexCreate(TVMMutexIDRef mutexref);
+  TVMStatus VMMutexDelete(TVMMutexID mutex);
+  TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref);
+  TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout);     
+  TVMStatus VMMutexRelease(TVMMutexID mutex);
+
   
   struct openData{
     Thread *thread;
@@ -65,6 +73,9 @@ extern "C" {
     int result;
     int newOffset;
   };
+
+
+
   
   struct skelArg{
     TVMThreadEntry entry;
@@ -163,6 +174,43 @@ extern "C" {
     }
 
   };
+  class Mutex {
+  private:
+    std::vector<Thread *> threads;
+    TVMMutexID id;
+  public:
+    Mutex(TVMMutexID id) {
+      this->id = id;
+    }
+    TVMMutexID getID() {
+      return id;
+    }
+    bool isFree() {
+      return threads.empty();
+    }
+    Thread *owner() {
+      if(isFree()) {
+	return NULL;
+      }
+      return threads.front();
+    }
+    // Return true if we were first in line.
+    bool acquire(Thread *x) {
+      threads.push_back(x);
+      return threads.front() == x;
+    }
+    void release() {
+      threads.erase(threads.begin());
+    }
+  };
+  Mutex *getMutexByID(TVMMutexID id) {
+    for(unsigned int i = 0; i < _mutexes.size(); ++i) {
+      if(_mutexes[i]->getID() == id) {
+	return _mutexes[i];
+      }
+    }
+    return NULL;
+  }
   Thread *getThreadByID(TVMThreadID id) {
     for(unsigned int i = 0; i < _threads.size(); ++i) {
       if(_threads[i]->getID() == id) {
@@ -186,6 +234,7 @@ extern "C" {
     
     _current_thread = 0;
     _ntid = 0;
+    _nmid = 0;
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
@@ -652,5 +701,49 @@ extern "C" {
       VMThreadActivate(tmp->getID());
   }
   
+  TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
+    if(mutexref == NULL) {
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    _mutexes.push_back(new Mutex(_nmid));
+    *mutexref = _nmid;
+    ++_nmid;
+    return VM_STATUS_SUCCESS;
+  }
+  TVMStatus VMMutexDelete(TVMMutexID mutex) {
+    Mutex *x;
+    for(int i = _mutexes.size() - 1;i >= 0;--i) {
+      if(_mutexes[i]->getID() == mutex) {
+	if(! _mutexes[i]->isFree()) {
+	  return VM_STATUS_ERROR_INVALID_STATE;
+	}
+	x = _mutexes[i];
+	_mutexes.erase(_mutexes.begin()+i);
+	delete x;
+      }
+    }
+    return VM_STATUS_ERROR_INVALID_ID;
+  }
+  TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
+    if(ownerref == NULL) {
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    Mutex *x = getMutexByID(mutex);
+    if(x == NULL) {
+      return VM_STATUS_ERROR_INVALID_ID;
+    }
+    if(x->isFree()) {
+      *ownerref = VM_THREAD_ID_INVALID;
+    } else {
+      *ownerref = x->owner()->getID();
+    }
+    return VM_STATUS_SUCCESS;
+  }
+  TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
+    return VM_STATUS_SUCCESS;
+  }
+  TVMStatus VMMutexRelease(TVMMutexID mutex) { 
+    return VM_STATUS_SUCCESS;
+  }
 
 }
