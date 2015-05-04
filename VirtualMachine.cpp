@@ -36,12 +36,45 @@ extern "C" {
   void skeleton(void* param);
   void mainSkel(void* param);
   TVMStatus VMThreadState(TVMThreadID thread, TVMThreadStateRef stateref);
-
+  void openCallback(void *calldata, int result);
+  void closeCallback(void *calldata, int result);
+  void readCallback(void *calldata, int result);
+  void writeCallback(void *calldata, int result);
+  void seekCallback(void *calldata, int result);
   TVMStatus VMMutexCreate(TVMMutexIDRef mutexref);
   TVMStatus VMMutexDelete(TVMMutexID mutex);
   TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref);
   TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout);     
   TVMStatus VMMutexRelease(TVMMutexID mutex);
+
+  
+  struct openData{
+    Thread *thread;
+    int result;
+  };
+  
+  struct closeData{
+    Thread *thread;
+    int result;
+  };
+  
+  struct readData{
+    Thread *thread;
+    int result;
+  };
+  
+  struct writeData{
+    Thread *thread;
+    int result;
+  };
+  
+  struct seekData{
+    Thread *thread;
+    int result;
+    int newOffset;
+  };
+
+
 
   
   struct skelArg{
@@ -288,19 +321,7 @@ extern "C" {
     return VM_STATUS_SUCCESS;
   }
 
-  TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
-    if(data == NULL || length == NULL)
-      return VM_STATUS_ERROR_INVALID_PARAMETER;
-    int what_is_left;
-    printf("###: \n");
-    what_is_left = write(filedescriptor,(char *)data,*length);
-    printf("###: \n");
-    if(what_is_left == -1)
-      return VM_STATUS_FAILURE;
-    *length = what_is_left; // This is how we tell who called us how much we
-                                     // actually wrote.
-    return VM_STATUS_SUCCESS;
-  }
+
   
   TVMStatus VMThreadSleep(TVMTick tick) {
     MachineSuspendSignals(_signalstate);
@@ -551,6 +572,177 @@ extern "C" {
       
       return VM_STATUS_SUCCESS;
   }
+  
+  TVMStatus VMFileOpen(const char *filename, int flags, int mode, int *filedescriptor){
+    
+    if(filename == NULL || filedescriptor == NULL){
+      printf("INVALID PARAMETER IN OPEN\n");
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    
+    struct openData *oData = new struct openData;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *curThread = getThreadByID(cur);
+    oData->thread = curThread;
+    MachineSuspendSignals(_signalstate);
+    curThread->setState(VM_THREAD_STATE_WAITING);
+    MachineFileOpen(filename, flags, mode, openCallback, oData);
+    printf("called MachineFileOpen\n");
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
+    //Returned from callback
+    *filedescriptor = oData->result;
+    if(oData->result == -1){
+      return VM_STATUS_FAILURE;
+    }
+    return VM_STATUS_SUCCESS;
+  }
+  
+  TVMStatus VMFileClose(int filedescriptor){
+    struct closeData *cData = new struct closeData;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *curThread = getThreadByID(cur);
+    cData->thread = curThread;
+    MachineSuspendSignals(_signalstate);
+    curThread->setState(VM_THREAD_STATE_WAITING);
+    MachineFileClose(filedescriptor, closeCallback, cData);
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
+    //returned from callback
+    if(cData->result == -1){
+      return VM_STATUS_FAILURE;
+    }
+    return VM_STATUS_SUCCESS;
+  }
+        
+  TVMStatus VMFileRead(int filedescriptor, void *data, int *length){
+    if(data == NULL || length == NULL){
+      printf("Failed to read, invalid parameters");
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    struct readData *rData = new struct readData;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *curThread = getThreadByID(cur);
+    rData->thread = curThread;
+    printf("In VMFileRead for fd %d in thread %u\n",filedescriptor,cur);
+    MachineSuspendSignals(_signalstate);
+    curThread->setState(VM_THREAD_STATE_WAITING);
+    MachineFileRead(filedescriptor, data, *length, readCallback, rData);
+    printf("called MachineFileRead\n");
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
+    //returned from callback
+    *length = rData->result;
+    printf("We Read %u chars\n",rData->result);
+    if(rData->result < 0){
+      printf( "ERROR in VMFileRead");
+      return VM_STATUS_FAILURE;
+    }
+    
+    printf("\n%s\n\n",(char*)data);
+    return VM_STATUS_SUCCESS;
+  }
+  
+  TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
+    if(data == NULL || length == NULL){
+      printf("Failed to write, invalid parameters");
+      return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    struct writeData *wData = new struct writeData;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *curThread = getThreadByID(cur);
+    wData->thread = curThread;
+    printf("In VMFileWrite for fd %d in thread %u\n",filedescriptor,cur);
+    MachineSuspendSignals(_signalstate);
+    curThread->setState(VM_THREAD_STATE_WAITING);
+    MachineFileWrite(filedescriptor, data, *length, writeCallback, wData);
+    printf("called MachineFileWrite\n");
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
+    //returned from callback
+    *length = wData->result;
+    printf("We wrote %u chars\n",wData->result);
+    if(wData->result < 0){
+      return VM_STATUS_FAILURE;
+    }
+    return VM_STATUS_SUCCESS;
+  }
+  
+  
+  TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset){
+    struct seekData *sData = new struct seekData;
+    TVMThreadID cur;
+    VMThreadID(&cur);
+    Thread *curThread = getThreadByID(cur);
+    sData->thread = curThread;
+    printf("In VMFileSeek for fd %d in thread %u\n",filedescriptor,cur);
+    MachineSuspendSignals(_signalstate);
+    curThread->setState(VM_THREAD_STATE_WAITING);
+    MachineFileSeek(filedescriptor, offset, whence, seekCallback, sData);
+    printf("called MachineFileSeek\n");
+    MachineResumeSignals(_signalstate);
+    VMScheduleThreads();
+    //returned from callback
+    *newoffset = sData->result;
+    printf("We moved %u chars\n",sData->result);
+    if(sData->result < 0){
+      return VM_STATUS_FAILURE;
+    }
+    return VM_STATUS_SUCCESS;
+  }
+  
+  void openCallback(void *calldata, int result){
+      printf("In Open CallBack\n");
+      struct openData *oData = (struct openData*) calldata;
+      oData->result = result;
+      //reactivate thread
+      Thread *tmp = oData->thread;
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(tmp->getID());
+      
+  }
+  void closeCallback(void *calldata, int result){
+      printf("In close CallBack\n");
+      struct closeData *cData = (struct closeData*) calldata;
+      cData->result = result;
+      //reactivate thread
+      Thread *tmp = cData->thread;
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(tmp->getID());
+  }
+  void readCallback(void *calldata, int result){
+      printf("In Read CallBack\n");
+      printf("result = %d\n",result);
+      struct readData *rData = (struct readData*) calldata;
+      rData->result = result;
+      //reactivate thread
+      Thread *tmp = rData->thread;
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(tmp->getID());
+  }
+  void writeCallback(void *calldata, int result){
+      printf("In write CallBack\n");
+      struct writeData *wData = (struct writeData*) calldata;
+      wData->result = result;
+      //reactivate thread
+      Thread *tmp = wData->thread;
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(tmp->getID());
+  }
+  void seekCallback(void *calldata, int result){
+      printf("In seek CallBack\n");
+      struct writeData *sData = (struct writeData*) calldata;
+      sData->result = result;
+      //reactivate thread
+      Thread *tmp = sData->thread;
+      tmp->setState(VM_THREAD_STATE_DEAD);
+      VMThreadActivate(tmp->getID());
+  }
+  
   TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
     MachineSuspendSignals(_signalstate);
     if(mutexref == NULL) {
