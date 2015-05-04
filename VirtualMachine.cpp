@@ -138,11 +138,11 @@ extern "C" {
       tThreadState = state;
     }
     void run() {
-      printf("In Run. Thread id: %u\n",this->tThreadID);
+      //printf("In Run. Thread id: %u\n",this->tThreadID);
       setState(VM_THREAD_STATE_RUNNING);
       TVMThreadID ref;
       VMThreadID(&ref);
-      printf("Grabbed reference. Thread id: %u\n",ref);
+      //printf("Grabbed reference. Thread id: %u\n",ref);
       Thread *x = getThreadByID(ref);
       if(x != NULL){
           // Only activate it if it was activated before.
@@ -153,13 +153,13 @@ extern "C" {
             VMThreadActivate(ref);
             
           }
-          printf("Switched from thread %u to thread %u\n",ref,tThreadID);
+          //printf("Switched from thread %u to thread %u\n",ref,tThreadID);
           _current_thread = this->tThreadID;
           MachineContextSwitch(x->getRef(),this->mcntxref);
       }
       else{
 	_current_thread = this->tThreadID;
-	printf("Switched to thread %u\n", tThreadID);
+	//printf("Switched to thread %u\n", tThreadID);
 	MachineContextRestore(this->mcntxref);
       }
     }
@@ -167,10 +167,10 @@ extern "C" {
       return mcntxref;
     }    
     ~Thread() {
-      printf("IN Thread %u deconstructor\n",tThreadID);
+      //printf("IN Thread %u deconstructor\n",tThreadID);
       delete mcntxref;
       free(tStack);
-      printf("Finished Thread %u deconstructor\n",tThreadID);
+      //printf("Finished Thread %u deconstructor\n",tThreadID);
     }
 
   };
@@ -238,7 +238,7 @@ extern "C" {
     _tickms = tickms;
     _machinetickms = machinetickms;
     TVMMainEntry module_main = NULL;
-    int alarmtick = 100*_tickms; // milliseconds to microseconds conversion
+    int alarmtick = 1000*_tickms; // milliseconds to microseconds conversion
     _total_ticks = 0;
     _largestprime = 2;
     _lastlargestprime = 1;
@@ -246,13 +246,13 @@ extern "C" {
     to_deletes[0] = NULL; // Nothing to delete yet
     to_deletes[1] = NULL; // 
     
-    printf("In VMStart\n");
+    //printf("In VMStart\n");
     //initialize machine
     MachineInitialize(_machinetickms);
     MachineEnableSignals();
     
     //Create Thread for VM (ID = 0)
-    //printf("Creating Main Thread: tid = %d\n",_ntid);
+    ////printf("Creating Main Thread: tid = %d\n",_ntid);
     VMThreadCreate(timetokill, NULL, 10, VM_THREAD_PRIORITY_LOW, &_ntid);
     
 
@@ -260,7 +260,7 @@ extern "C" {
     VMThreadCreate(timetokill, NULL, 0x100000, 000, &_ntid); //was informed we need at least 10k
     VMThreadActivate(1);
     
-    //printf("Thread %d activated\n",(_ntid-1));
+    ////printf("Thread %d activated\n",(_ntid-1));
     //load and call module
     module_main = VMLoadModule(argv[0]);
     if(module_main == NULL)
@@ -278,7 +278,7 @@ extern "C" {
     VMScheduleThreads(); // Main stops excuting here, once it starts
 			 // again (by switching back to
 			 // the main thread). The machine exits.
-    printf("Exiting VMStart.\n");
+    //printf("Exiting VMStart.\n");
     return VM_STATUS_SUCCESS;
   }
 
@@ -288,7 +288,7 @@ extern "C" {
     MachineSuspendSignals(_signalstate);
     TVMThreadID cur;
     VMThreadID(&cur);
-    printf("Thread %u is tired and needs to sleep for %u ticks.\n",cur,tick);
+    //printf("Thread %u is tired and needs to sleep for %u ticks.\n",cur,tick);
     Thread *x = getThreadByID(cur);
     x->setState(VM_THREAD_STATE_WAITING);
     x->setSleep(tick);
@@ -299,7 +299,7 @@ extern "C" {
   }
 
   TVMStatus VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThreadPriority prio, TVMThreadIDRef tid){
-    printf("In VMThreadCreate, tid = %u\n",_ntid);
+    //printf("In VMThreadCreate, tid = %u\n",_ntid);
     MachineSuspendSignals(_signalstate);
     Thread *thread;
     if(_threads.size() >= 2){ //not VMMain or time to kill
@@ -319,7 +319,7 @@ extern "C" {
   }
   
   void timetokill(void* param){
-    printf("In timetokill.\n");
+    //printf("In timetokill.\n");
     MachineEnableSignals(); // Won't int without it.
     bool prime = true;
     while(1){
@@ -332,7 +332,7 @@ extern "C" {
       if(prime){
 	_largestprime = _largesttest;
 	if(_largestprime > _lastlargestprime * 2) {
-	  printf("Reached prime milestone: %llu\n",_largestprime);
+	  //printf("Reached prime milestone: %llu\n",_largestprime);
 	  _lastlargestprime = _largestprime;
 	}
       }
@@ -349,7 +349,7 @@ extern "C" {
     VMThreadID(&cur);
     VMThreadTerminate(cur);
     VMThreadDelete(cur);
-    printf("In skeleton, finished deleting thread %u\n",cur);
+    //printf("In skeleton, finished deleting thread %u\n",cur);
     VMScheduleThreads();
   }
   
@@ -361,16 +361,16 @@ extern "C" {
   
   TVMStatus VMThreadActivate(TVMThreadID thread){
     MachineSuspendSignals(_signalstate);
-    printf("In VMThreadActivate, with thread %u\n",thread);
+    //printf("In VMThreadActivate, with thread %u\n",thread);
     for(unsigned int i = 0; i < _threads.size(); ++i){
         if(_threads[i]->getID() == thread){
             //thread must be dead
             if(_threads[i]->getState() != VM_THREAD_STATE_DEAD){
-	      printf("WILL NOT ACTIVATE, THREAD IS NOT DEAD.\n");
+	      //printf("WILL NOT ACTIVATE, THREAD IS NOT DEAD.\n");
                 return VM_STATUS_ERROR_INVALID_STATE;
             }
             //set state
-	    printf("Activated thread.\n");
+	    //printf("Activated thread.\n");
             _threads[i]->setState(VM_THREAD_STATE_READY);
             //push in Q
             TVMThreadPriority prio = _threads[i]->getPriority();
@@ -402,7 +402,7 @@ extern "C" {
       tmp = _sleeping_threads[i]->getSleep();
       if(tmp == 0) {
 	_sleeping_threads[i]->setState(VM_THREAD_STATE_DEAD);
-	printf("Waking thread %u from it's nap\n",_sleeping_threads[i]->getID());
+	//printf("Waking thread %u from it's nap\n",_sleeping_threads[i]->getID());
 	VMThreadActivate(_sleeping_threads[i]->getID());
 	_sleeping_threads.erase(_sleeping_threads.begin()+i);
       } else {
@@ -413,7 +413,7 @@ extern "C" {
     if(_threads.size() == 2) {
       // We have nothing left to do but to terminate.
       // We terminate by letting VMMain finish.
-      printf("We are only killing time now... might as well die.\n");
+      //printf("We are only killing time now... might as well die.\n");
       VMThreadActivate(0);
     }
     VMScheduleThreads();
@@ -429,14 +429,14 @@ extern "C" {
     Thread *cur_thread = getThreadByID(cur);
     if(to_deletes[0] != NULL) {
       if(cur != to_deletes[0]->getID()) {
-	printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[0]->getID());
+	//printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[0]->getID());
 	delete to_deletes[0];
 	to_deletes[0] = NULL;
       }
     }
     if(to_deletes[1] != NULL) {
       if(cur != to_deletes[1]->getID()) {
-	printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[1]->getID());
+	//printf("Found a thread to cleanup, cleaning thread %u\n",to_deletes[1]->getID());
 	delete to_deletes[1];
 	to_deletes[1] = NULL;
       }
@@ -451,19 +451,19 @@ extern "C" {
       prio = cur_thread->getPriority();
     }
     if(!highQ.empty() && prio <= VM_THREAD_PRIORITY_HIGH) {
-      printf("High Priority Found\n");
+      //printf("High Priority Found\n");
       tmp = highQ.front();
       highQ.pop();
     } else if (!medQ.empty() && prio <= VM_THREAD_PRIORITY_NORMAL) {
-      printf("Normal Priority Found\n");
+      //printf("Normal Priority Found\n");
       tmp = medQ.front();
       medQ.pop();
     } else if (!lowQ.empty() && prio <= VM_THREAD_PRIORITY_LOW) {
-      printf("Low Priority Found\n");
+      //printf("Low Priority Found\n");
       tmp = lowQ.front();
       lowQ.pop();
     } else if (!jamezQ.empty() && prio == 0) {
-      printf("JamezQ Priority Found\n");
+      //printf("JamezQ Priority Found\n");
       tmp = jamezQ.front();
       jamezQ.pop();
     }
@@ -476,7 +476,7 @@ extern "C" {
   
   TVMStatus VMThreadTerminate(TVMThreadID thread){
       //Deal with mutexes
-      printf("Terminating thread %u\n",thread);
+      //printf("Terminating thread %u\n",thread);
       MachineSuspendSignals(_signalstate);
       Thread *tmp = getThreadByID(thread);  
       if(tmp == NULL){
@@ -494,7 +494,7 @@ extern "C" {
   
   TVMStatus VMThreadDelete(TVMThreadID thread){
       MachineSuspendSignals(_signalstate);
-      printf("Deleting thread %u\n",thread);
+      //printf("Deleting thread %u\n",thread);
       Thread *tmp;
       for(unsigned int i = 0; i < _threads.size(); ++i) {
         if(_threads[i]->getID() == thread) {
@@ -505,11 +505,11 @@ extern "C" {
 	  } else if(to_deletes[1] == NULL) {
 	    to_deletes[1] = tmp;
 	  } else {
-	    printf("Major issue, no place to delete this thread!\n");
+	    //printf("Major issue, no place to delete this thread!\n");
 	  }
         }
       }
-      printf("Thread %u deleted.\n", thread);
+      //printf("Thread %u deleted.\n", thread);
       MachineResumeSignals(_signalstate);
       
       return VM_STATUS_SUCCESS;
@@ -534,7 +534,7 @@ extern "C" {
   TVMStatus VMFileOpen(const char *filename, int flags, int mode, int *filedescriptor){
     
     if(filename == NULL || filedescriptor == NULL){
-      printf("INVALID PARAMETER IN OPEN\n");
+      //printf("INVALID PARAMETER IN OPEN\n");
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
     
@@ -546,7 +546,7 @@ extern "C" {
     MachineSuspendSignals(_signalstate);
     curThread->setState(VM_THREAD_STATE_WAITING);
     MachineFileOpen(filename, flags, mode, openCallback, oData);
-    printf("called MachineFileOpen\n");
+    //printf("called MachineFileOpen\n");
     MachineResumeSignals(_signalstate);
     VMScheduleThreads();
     //Returned from callback
@@ -577,7 +577,7 @@ extern "C" {
         
   TVMStatus VMFileRead(int filedescriptor, void *data, int *length){
     if(data == NULL || length == NULL){
-      printf("Failed to read, invalid parameters");
+      //printf("Failed to read, invalid parameters");
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
     struct readData *rData = new struct readData;
@@ -585,28 +585,28 @@ extern "C" {
     VMThreadID(&cur);
     Thread *curThread = getThreadByID(cur);
     rData->thread = curThread;
-    printf("In VMFileRead for fd %d in thread %u\n",filedescriptor,cur);
+    //printf("In VMFileRead for fd %d in thread %u\n",filedescriptor,cur);
     MachineSuspendSignals(_signalstate);
     curThread->setState(VM_THREAD_STATE_WAITING);
     MachineFileRead(filedescriptor, data, *length, readCallback, rData);
-    printf("called MachineFileRead\n");
+    //printf("called MachineFileRead\n");
     MachineResumeSignals(_signalstate);
     VMScheduleThreads();
     //returned from callback
     *length = rData->result;
-    printf("We Read %u chars\n",rData->result);
+    //printf("We Read %u chars\n",rData->result);
     if(rData->result < 0){
-      printf( "ERROR in VMFileRead");
+      //printf( "ERROR in VMFileRead");
       return VM_STATUS_FAILURE;
     }
     
-    printf("\n%s\n\n",(char*)data);
+    //printf("\n%s\n\n",(char*)data);
     return VM_STATUS_SUCCESS;
   }
   
   TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
     if(data == NULL || length == NULL){
-      printf("Failed to write, invalid parameters");
+      //printf("Failed to write, invalid parameters");
       return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
     struct writeData *wData = new struct writeData;
@@ -614,16 +614,16 @@ extern "C" {
     VMThreadID(&cur);
     Thread *curThread = getThreadByID(cur);
     wData->thread = curThread;
-    printf("In VMFileWrite for fd %d in thread %u\n",filedescriptor,cur);
+    //printf("In VMFileWrite for fd %d in thread %u\n",filedescriptor,cur);
     MachineSuspendSignals(_signalstate);
     curThread->setState(VM_THREAD_STATE_WAITING);
     MachineFileWrite(filedescriptor, data, *length, writeCallback, wData);
-    printf("called MachineFileWrite\n");
+    //printf("called MachineFileWrite\n");
     MachineResumeSignals(_signalstate);
     VMScheduleThreads();
     //returned from callback
     *length = wData->result;
-    printf("We wrote %u chars\n",wData->result);
+    //printf("We wrote %u chars\n",wData->result);
     if(wData->result < 0){
       return VM_STATUS_FAILURE;
     }
@@ -637,16 +637,16 @@ extern "C" {
     VMThreadID(&cur);
     Thread *curThread = getThreadByID(cur);
     sData->thread = curThread;
-    printf("In VMFileSeek for fd %d in thread %u\n",filedescriptor,cur);
+    //printf("In VMFileSeek for fd %d in thread %u\n",filedescriptor,cur);
     MachineSuspendSignals(_signalstate);
     curThread->setState(VM_THREAD_STATE_WAITING);
     MachineFileSeek(filedescriptor, offset, whence, seekCallback, sData);
-    printf("called MachineFileSeek\n");
+    //printf("called MachineFileSeek\n");
     MachineResumeSignals(_signalstate);
     VMScheduleThreads();
     //returned from callback
     *newoffset = sData->result;
-    printf("We moved %u chars\n",sData->result);
+    //printf("We moved %u chars\n",sData->result);
     if(sData->result < 0){
       return VM_STATUS_FAILURE;
     }
@@ -654,7 +654,7 @@ extern "C" {
   }
   
   void openCallback(void *calldata, int result){
-      printf("In Open CallBack\n");
+      //printf("In Open CallBack\n");
       struct openData *oData = (struct openData*) calldata;
       oData->result = result;
       //reactivate thread
@@ -664,7 +664,7 @@ extern "C" {
       
   }
   void closeCallback(void *calldata, int result){
-      printf("In close CallBack\n");
+      //printf("In close CallBack\n");
       struct closeData *cData = (struct closeData*) calldata;
       cData->result = result;
       //reactivate thread
@@ -673,8 +673,8 @@ extern "C" {
       VMThreadActivate(tmp->getID());
   }
   void readCallback(void *calldata, int result){
-      printf("In Read CallBack\n");
-      printf("result = %d\n",result);
+      //printf("In Read CallBack\n");
+      //printf("result = %d\n",result);
       struct readData *rData = (struct readData*) calldata;
       rData->result = result;
       //reactivate thread
@@ -683,7 +683,7 @@ extern "C" {
       VMThreadActivate(tmp->getID());
   }
   void writeCallback(void *calldata, int result){
-      printf("In write CallBack\n");
+      //printf("In write CallBack\n");
       struct writeData *wData = (struct writeData*) calldata;
       wData->result = result;
       //reactivate thread
@@ -692,7 +692,7 @@ extern "C" {
       VMThreadActivate(tmp->getID());
   }
   void seekCallback(void *calldata, int result){
-      printf("In seek CallBack\n");
+      //printf("In seek CallBack\n");
       struct writeData *sData = (struct writeData*) calldata;
       sData->result = result;
       //reactivate thread
